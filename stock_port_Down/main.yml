@@ -5,7 +5,8 @@
 
   vars:
     snow_instance: " uri:
-        url: "https://{{ snow_host }}/api/now/v2/table/incident?sysparm_query=assignment_group%3D{{ sys_group }}%5Estate%3D1&sysparm_view=""
+        url: "https://{{ snow_instance }}/api/now/table/incident ?sysparm_query=assignment_group={{ assignment_group_sys_id }}"
+       
     snow_user: "api_user"
     snow_pass: "api_password"
     short_description: "Stack Port Down Alert"
@@ -16,7 +17,7 @@
 
     - name: Create ServiceNow Incident
      uri:
-        url: "https://{{ snow_host }}/api/now/v2/table/incident?sysparm_query=assignment_group%3D{{ sys_group }}%5Estate%3D1&sysparm_view="
+        url: "https://{{ snow_instance }}/api/now/table/incident?sysparm_query=assignment_group={{ assignment_group_sys_id }}"
       include_role:
         name: create_incident
 
