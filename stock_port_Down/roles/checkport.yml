@@ -1,0 +1,9 @@
+- name: Check interface status
+  ansible.netcommon.cli_command:
+    command: "show interface {{ interface_name }} status"
+  register: port_output
+
+- name: Set port status
+  set_fact:
+    port_status: >-
+      {{ 'up' if 'connected' in port_output.stdout else 'down' }}
