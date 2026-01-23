@@ -1,0 +1,14 @@
+- name: Create incident in ServiceNow
+  servicenow.itsm.incident:
+    instance:
+      host: "{{ snow_instance }}"
+      username: "{{ snow_user }}"
+      password: "{{ snow_pass }}"
+    state: new
+    short_description: "{{ short_description }}"
+    description: "Automated alert: Stack port down detected"
+    priority: 2
+  register: incident_result
+
+- set_fact:
+    incident_number: "{{ incident_result.record.number }}"
