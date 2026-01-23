@@ -4,17 +4,19 @@
   gather_facts: no
 
   vars:
-    snow_instance: ""
+    snow_instance: " uri:
+        url: "https://{{ snow_host }}/api/now/v2/table/incident?sysparm_query=assignment_group%3D{{ sys_group }}%5Estate%3D1&sysparm_view=""
     snow_user: "api_user"
     snow_pass: "api_password"
     short_description: "Stack Port Down Alert"
     assignment_group: "NOC"
-    device_ip: "10.10.10.10"
-    interface_name: "Gi1/0/10"
+    
 
   tasks:
 
     - name: Create ServiceNow Incident
+     uri:
+        url: "https://{{ snow_host }}/api/now/v2/table/incident?sysparm_query=assignment_group%3D{{ sys_group }}%5Estate%3D1&sysparm_view="
       include_role:
         name: create_incident
 
