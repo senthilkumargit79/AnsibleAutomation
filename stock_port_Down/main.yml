@@ -1,0 +1,33 @@
+---
+- name: Stack Port Down Automation
+  hosts: localhost
+  gather_facts: no
+
+  vars:
+    snow_instance: ""
+    snow_user: "api_user"
+    snow_pass: "api_password"
+    short_description: "Stack Port Down Alert"
+    assignment_group: "NOC"
+    device_ip: "10.10.10.10"
+    interface_name: "Gi1/0/10"
+
+  tasks:
+
+    - name: Create ServiceNow Incident
+      include_role:
+        name: create_incident
+
+    - name: Check switch port status
+      include_role:
+        name: check_port
+
+    - name: Close incident if port is UP
+      include_role:
+        name: update_incident
+      when: port_status == "up"
+
+    - name: Transfer incident to NOC if port still DOWN
+      include_role:
+        name: notify_noc
+      when: port_status == "down"
