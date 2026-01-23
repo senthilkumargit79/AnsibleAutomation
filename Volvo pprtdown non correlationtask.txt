@@ -1,0 +1,148 @@
+Skip to content
+Chat history
+
+
+This is a copy of a conversation between ChatGPT & Anonymous.
+
+Report conversation
+You said:
+Uploaded image
+Need ansinle playbook  
+ChatGPT said:
+Got it 👍
+You want an Ansible playbook that matches this “Stack Port Down – Automation Flow (Non-Correlation)” diagram.
+
+Below is a clean, real-world sample playbook you can adapt for AAP + ServiceNow + Network check.
+
+Assumptions (you can tweak)
+Monitoring already detected port down
+
+Playbook is triggered from AAP
+
+ServiceNow used for Incident
+
+Network device checked via CLI / API
+
+If issue auto-resolved → close incident
+
+If not → transfer to NOC
+
+Folder structure (recommended)
+stack-port-down/
+├── playbook.yml
+├── roles/
+│   ├── create_incident/
+│   ├── check_port/
+│   ├── update_incident/
+│   └── notify_noc/
+Main Playbook (playbook.yml)
+---
+- name: Stack Port Down Automation
+  hosts: localhost
+  gather_facts: no
+
+  vars:
+    snow_instance: "your_instance"
+    snow_user: "api_user"
+    snow_pass: "api_password"
+    short_description: "Stack Port Down Alert"
+    assignment_group: "NOC"
+    device_ip: "10.10.10.10"
+    interface_name: "Gi1/0/10"
+
+  tasks:
+
+    - name: Create ServiceNow Incident
+      include_role:
+        name: create_incident
+
+    - name: Check switch port status
+      include_role:
+        name: check_port
+
+    - name: Close incident if port is UP
+      include_role:
+        name: update_incident
+      when: port_status == "up"
+
+    - name: Transfer incident to NOC if port still DOWN
+      include_role:
+        name: notify_noc
+      when: port_status == "down"
+
+Role: create_incident
+- name: Create incident in ServiceNow
+  servicenow.itsm.incident:
+    instance:
+      host: "{{ snow_instance }}"
+      username: "{{ snow_user }}"
+      password: "{{ snow_pass }}"
+    state: new
+    short_description: "{{ short_description }}"
+    description: "Automated alert: Stack port down detected"
+    priority: 2
+  register: incident_result
+
+- set_fact:
+    incident_number: "{{ incident_result.record.number }}"
+
+Role: check_port
+(Example using network_cli – adjust for your device)
+
+- name: Check interface status
+  ansible.netcommon.cli_command:
+    command: "show interface {{ interface_name }} status"
+  register: port_output
+
+- name: Set port status
+  set_fact:
+    port_status: >-
+      {{ 'up' if 'connected' in port_output.stdout else 'down' }}
+
+Role: update_incident (Auto-Close)
+- name: Close incident
+  servicenow.itsm.incident:
+    instance:
+      host: "{{ snow_instance }}"
+      username: "{{ snow_user }}"
+      password: "{{ snow_pass }}"
+    number: "{{ incident_number }}"
+    state: closed
+    close_code: "Solved (Permanently)"
+    close_notes: "Port restored automatically by automation"
+
+Role: notify_noc (Transfer)
+- name: Assign incident to NOC
+  servicenow.itsm.incident:
+    instance:
+      host: "{{ snow_instance }}"
+      username: "{{ snow_user }}"
+      password: "{{ snow_pass }}"
+    number: "{{ incident_number }}"
+    assignment_group: "{{ assignment_group }}"
+    work_notes: "Automation failed to recover port. Handed over to NOC."
+How this matches your flow diagram
+✔ Alert received
+✔ Incident created
+✔ Port checked
+✔ Decision (UP / DOWN)
+✔ Auto-close OR transfer to NOC
+✔ Notification updated in ServiceNow
+
+If you want, I can also:
+
+Convert this to AAP Job Template ready
+
+Add email / Teams notification
+
+Add retry + timer logic
+
+Add stack member identification
+
+Just tell me 👍
+
+
+
+
+No file chosenNo file chosen
+ChatGPT can make mistakes. Check important info. See Cookie Preferences.
