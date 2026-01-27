@@ -7,10 +7,13 @@
     snow_instance: " uri:
         url: "https://{{ snow_instance }}/api/now/table/incident ?sysparm_query=assignment_group={{ assignment_group_sys_id }}"
        
-    snow_user: "api_user"
-    snow_pass: "api_password"
+    
     short_description: "Stack Port Down Alert"
     assignment_group: "NOC"
+
+  vars_files:
+  - secrets.yml
+   
     
 
   tasks:
