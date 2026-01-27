@@ -1,4 +1,6 @@
 - name: Create incident in ServiceNow
+  vars_files
+    -secretes.yml
   servicenow.itsm.incident:
     instance:
       host: "{{ snow_instance }}"
