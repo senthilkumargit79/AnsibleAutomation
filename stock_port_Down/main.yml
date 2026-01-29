@@ -23,7 +23,7 @@
 
     - name: Check switch port status
       include_role:
-        name: check_port
+        name: checkport
 
     - name: Close incident if port is UP
       include_role:
