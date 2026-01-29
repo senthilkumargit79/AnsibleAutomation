@@ -1,36 +1,71 @@
 ---
 - name: Stack Port Down Automation
   hosts: localhost
-  gather_facts: no
-
-  vars:
-    snow_instance: 
-    url: "https://{{ snow_instance }}/api/now/table/incident ?sysparm_query=assignment_group={{ assignment_group_sys_id }}"
-    short_description: "Stack Port Down Alert"
-    assignment_group: "NOC"
+  gather_facts: false
 
   vars_files:
-  - secrets.yml
-   
+    - secrets.yml
+
+  vars:
     
+    # Prefer defining snow_instance in secrets.yml
+    snow_instance: "{{ snow_instance | default('') }}"
+
+    # Either set assignment_group_sys_id in secrets.yml OR set it here
+    assignment_group_sys_id: "{{ assignment_group_sys_id | default('') }}"
+
+    assignment_group: "NOC"
+    short_description: "Stack Port Down Alert"
+
+    # Base API URL
+    snow_api_base: "https://{{ snow_instance }}/api/now/table"
+
+    # Incident table endpoint
+    snow_incident_url: "{{ snow_api_base }}/incident"
+
+    # Query used by roles (if needed)
+    snow_incident_query: "assignment_group={{ assignment_group_sys_id }}"
+    snow_incident_query_url: "{{ snow_incident_url }}?sysparm_query={{ snow_incident_query }}"
+
+  pre_tasks:
+    - name: Validate required ServiceNow variables are present
+      ansible.builtin.assert:
+        that:
+          - snow_instance | length > 0
+          - assignment_group_sys_id | length > 0
+        fail_msg: >
+          Missing required variables.
+          Ensure secrets.yml defines:
+          - snow_instance (e.g. devxxxxx.service-now.com)
+          - assignment_group_sys_id (sys_id of the assignment group)
+        success_msg: "Required ServiceNow variables are present."
 
   tasks:
-
     - name: Create ServiceNow Incident
-      url: "https://{{ snow_instance }}/api/now/table/incident?sysparm_query=assignment_group={{ assignment_group_sys_id }}"
-      include_role:
+      ansible.builtin.include_role:
         name: create_incident
+      vars:
+        snow_incident_url: "{{ snow_incident_url }}"
+        short_description: "{{ short_description }}"
+        assignment_group_sys_id: "{{ assignment_group_sys_id }}"
+        assignment_group: "{{ assignment_group }}"
 
     - name: Check switch port status
-      include_role:
+      ansible.builtin.include_role:
         name: checkport
 
     - name: Close incident if port is UP
-      include_role:
+      ansible.builtin.include_role:
         name: update_incident
-      when: port_status == "up"
+      when: (port_status | default('') | lower) == "up"
 
     - name: Transfer incident to NOC if port still DOWN
-      include_role:
+      ansible.builtin.include_role:
         name: notify_noc
-      when: port_status == "down"
+      when: (port_status | default('') | lower) == "down"
+
+    - name: Warn if port_status is not set by checkport role
+      ansible.builtin.debug:
+        msg: "port_status was not set by role checkport. Please set it using set_fact in the role."
+      when: port_status is not defined
+``
