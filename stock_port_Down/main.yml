@@ -64,8 +64,8 @@
         name: notify_noc
       when: (port_status | default('') | lower) == "down"
 
-    - name: Warn if port_status is not set by checkport role
-      ansible.builtin.debug:
-        msg: "port_status was not set by role checkport. Please set it using set_fact in the role."
-      when: port_status is not defined
+  #  - name: Warn if port_status is not set by checkport role
+   #   ansible.builtin.debug:
+    #    msg: "port_status was not set by role checkport. Please set it using set_fact in the role."
+     # when: port_status is not defined
 
