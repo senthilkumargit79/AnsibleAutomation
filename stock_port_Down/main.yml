@@ -9,7 +9,7 @@
   vars:
     
     # Prefer defining snow_instance in secrets.yml
-    snow_instance: "{{ snow_instance | default('') }}"
+    snow_instance: "hclitsmqa.service-now.com"
 
     # Either set assignment_group_sys_id in secrets.yml OR set it here
     assignment_group_sys_id: "{{ assignment_group_sys_id | default('') }}"
