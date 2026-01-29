@@ -1,6 +1,0 @@
-
----
-collections:
-  - name: cisco.ios             # ios_command for Cisco IOS/IOS-XE devices
-  - name: ansible.netcommon     # network connection plugins
-  - name: servicenow.itsm       # convenient SNOW incident module (optional)
