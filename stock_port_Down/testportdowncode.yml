@@ -7,7 +7,7 @@
     - secrets.yml
 
   vars:
-    # -------- ServiceNow API ----------
+  
     snow_api_base: "https://{{ snow_instance }}/api/now/table"
     incident_table: "incident"
     staging_table: "u_staging_stack_port_down"
