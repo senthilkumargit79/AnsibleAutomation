@@ -79,8 +79,7 @@
 
     
     # 2) Process each staging record
-  
-    - name: Process staging records
+   - name: Process staging records
       when: (staging_records | default([]) | length) > 0
       loop: "{{ staging_records }}"
       loop_control:
