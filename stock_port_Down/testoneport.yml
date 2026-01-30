@@ -189,5 +189,5 @@
                 Vendor: Cisco
                 Alert detected: {{ alert_type | upper }}
                 Troubleshooting completed by Automation.
-HCL Service Integration and Management  Service Management - Test Instance
+
  
