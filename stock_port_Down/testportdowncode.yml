@@ -77,9 +77,9 @@
         msg: "No staging records in Assigned status."
       when: (staging_records | default([]) | length) == 0
 
-    # -------------------------------------------------------
+    
     # 2) Process each staging record
-    # -------------------------------------------------------
+  
     - name: Process staging records
       when: (staging_records | default([]) | length) > 0
       loop: "{{ staging_records }}"
