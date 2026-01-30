@@ -1,0 +1,193 @@
+---
+- name: Automation Cisco Troubleshooting with Connectivity & Reassignment
+  hosts: localhost
+  gather_facts: no
+ 
+  vars:
+    # ServiceNow
+    snow_instance: "your_instance.service-now.com"
+    snow_user: "ansible"
+    snow_password: "password"
+ 
+    automation_group: "Automation"
+    network_group: "Network"
+ 
+    # SMTP
+    smtp_host: "smtp.company.com"
+    smtp_port: 25
+    smtp_from: "automation@company.com"
+    network_team_email: "network-team@company.com"
+ 
+  tasks:
+ 
+    - name: Fetch P3 & P4 incidents assigned to Automation team
+      uri:
+        url: >-
+          "https://hclitsmqa.service-now.com/u_core_automation_inc_vlan_cpu.do?WSDL"
+        method: GET
+        user: "{{ snow_user }}"
+        password: "{{ snow_password }}"
+        force_basic_auth: yes
+        headers:
+          Accept: application/json
+      register: incident_response
+ 
+    - set_fact:
+        incidents: "{{ incident_response.json.result | default([]) }}"
+ 
+    - name: Process incidents
+      when: incidents | length > 0
+      loop: "{{ incidents }}"
+      loop_control:
+        loop_var: incident
+      block:
+ 
+        # 1️⃣ Move to Work in Progress
+        - name: Update incident to Work in Progress
+          uri:
+            url: "https://hclitsmqa.service-now.com/u_core_automation_inc_vlan_cpu.do?WSDL"
+            method: PATCH
+            user: "{{ snow_user }}"
+            password: "{{ snow_password }}"
+            force_basic_auth: yes
+            headers:
+              Content-Type: application/json
+            body_format: json
+            body:
+              state: 2
+              work_notes: "Incident picked up by Automation team."
+ 
+        # 2️⃣ Notify Network Team
+        - name: Send mail to Network team
+          mail:
+            host: "{{ smtp_host }}"
+            port: "{{ smtp_port }}"
+            from: "{{ smtp_from }}"
+            to: "{{ network_team_email }}"
+            subject: "Automation Alert: {{ incident.number }}"
+            body: |
+              Incident {{ incident.number }} moved to Work in Progress.
+              Automation will validate connectivity and troubleshoot if reachable.
+ 
+        # 3️⃣ Fetch CI relationship
+        - name: Fetch CI linked to incident
+          uri:
+            url: >-
+              "https://hclitsmqa.service-now.com/u_core_automation_inc_vlan_cpu.do?WSDL"
+            method: GET
+            user: "{{ snow_user }}"
+            password: "{{ snow_password }}"
+            force_basic_auth: yes
+          register: ci_relation
+ 
+        - set_fact:
+            ci_sys_id: "{{ ci_relation.json.result[0].ci_item.sys_id }}"
+          when: ci_relation.json.result | length > 0
+ 
+        # 4️⃣ Fetch CI details
+        - name: Fetch CI details
+          uri:
+            url: "https://hclitsmqa.service-now.com/u_core_automation_inc_vlan_cpu.do?WSDL"
+            method: GET
+            user: "{{ snow_user }}"
+            password: "{{ snow_password }}"
+            force_basic_auth: yes
+          register: ci_details
+          when: ci_sys_id is defined
+ 
+        - set_fact:
+            device_ip: "{{ ci_details.json.result.ip_address }}"
+            is_cisco: "{{ 'cisco' in (ci_details.json.result.manufacturer | lower | default('')) }}"
+ 
+        # 5️⃣ Connectivity Check (SSH / Port 22)
+        - name: Check device connectivity
+          wait_for:
+            host: "{{ device_ip }}"
+            port: 22
+            timeout: 5
+          register: connectivity_check
+          ignore_errors: yes
+          when: is_cisco
+ 
+        # 🚫 If device unreachable → Assign to Network team
+        - name: Reassign incident if device unreachable
+          when:
+            - is_cisco
+            - connectivity_check is failed
+          block:
+ 
+            - name: Update incident – Device unreachable
+              uri:
+                url: "https://hclitsmqa.service-now.com/u_core_automation_inc_vlan_cpu.do?WSDL"
+                method: PATCH
+                user: "{{ snow_user }}"
+                password: "{{ snow_password }}"
+                force_basic_auth: yes
+                headers:
+                  Content-Type: application/json
+                body_format: json
+                body:
+                  assignment_group: "{{ network_group }}"
+                  work_notes: |
+                    Automation connectivity check failed.
+                    Device {{ device_ip }} is unreachable (SSH/22).
+                    Incident reassigned to Network team for manual investigation.
+ 
+            - meta: end_host
+ 
+        # 6️⃣ Detect alert from work notes + summary + description
+        - name: Detect alert type
+          set_fact:
+            alert_type: >-
+              {% set text = (incident.work_notes | default('') | lower)
+                             ~ (incident.short_description | lower)
+                             ~ (incident.description | lower) %}
+              {% if 'cpu' in text and 'utilization' in text %}
+              cpu
+              {% elif 'vlan' in text and 'mismatch' in text %}
+              vlan
+              {% elif 'stack' in text and 'port' in text and 'down' in text %}
+              stack
+              {% else %}
+              generic
+              {% endif %}
+ 
+        # 7️⃣ Cisco Troubleshooting Roles
+        - name: Cisco CPU Utilization Troubleshooting
+          include_role:
+            name: cisco_cpu_utilization
+            tasks_from: cpu_utilization.yml
+          when: alert_type == 'cpu'
+ 
+        - name: Cisco VLAN Mismatch Troubleshooting
+          include_role:
+            name: cisco_vlan_mismatch
+            tasks_from: vlan_mismatch.yml
+          when: alert_type == 'vlan'
+ 
+        - name: Cisco Stack Port Down Troubleshooting
+          include_role:
+            name: cisco_stack_port_down
+            tasks_from: stackportport_down.yml
+          when: alert_type == 'stack'
+ 
+        # 8️⃣ Update ServiceNow work notes
+        - name: Update incident with troubleshooting result
+          uri:
+            url: "https://hclitsmqa.service-now.com/u_core_automation_inc_vlan_cpu.do?WSDL"
+            method: PATCH
+            user: "{{ snow_user }}"
+            password: "{{ snow_password }}"
+            force_basic_auth: yes
+            headers:
+              Content-Type: application/json
+            body_format: json
+            body:
+              work_notes: |
+                Connectivity check successful.
+                CI: {{ ci_details.json.result.name }}
+                Vendor: Cisco
+                Alert detected: {{ alert_type | upper }}
+                Troubleshooting completed by Automation.
+HCL Service Integration and Management  Service Management - Test Instance
+ 
