@@ -42,7 +42,7 @@
         loop_var: incident
       block:
  
-        # 1️⃣ Move to Work in Progress
+        # 1️ Move to Work in Progress
         - name: Update incident to Work in Progress
           uri:
             url: "https://hclitsmqa.service-now.com/u_core_automation_inc_vlan_cpu.do?WSDL"
@@ -57,7 +57,7 @@
               state: 2
               work_notes: "Incident picked up by Automation team."
  
-        # 2️⃣ Notify Network Team
+        # 2️ Notify Network Team
         - name: Send mail to Network team
           mail:
             host: "{{ smtp_host }}"
@@ -69,7 +69,7 @@
               Incident {{ incident.number }} moved to Work in Progress.
               Automation will validate connectivity and troubleshoot if reachable.
  
-        # 3️⃣ Fetch CI relationship
+        # 3️ Fetch CI relationship
         - name: Fetch CI linked to incident
           uri:
             url: >-
@@ -84,7 +84,7 @@
             ci_sys_id: "{{ ci_relation.json.result[0].ci_item.sys_id }}"
           when: ci_relation.json.result | length > 0
  
-        # 4️⃣ Fetch CI details
+        #  Fetch CI details
         - name: Fetch CI details
           uri:
             url: "https://hclitsmqa.service-now.com/u_core_automation_inc_vlan_cpu.do?WSDL"
@@ -99,7 +99,7 @@
             device_ip: "{{ ci_details.json.result.ip_address }}"
             is_cisco: "{{ 'cisco' in (ci_details.json.result.manufacturer | lower | default('')) }}"
  
-        # 5️⃣ Connectivity Check (SSH / Port 22)
+        #  Connectivity Check (SSH / Port 22)
         - name: Check device connectivity
           wait_for:
             host: "{{ device_ip }}"
@@ -109,7 +109,7 @@
           ignore_errors: yes
           when: is_cisco
  
-        # 🚫 If device unreachable → Assign to Network team
+        #  If device unreachable → Assign to Network team
         - name: Reassign incident if device unreachable
           when:
             - is_cisco
@@ -135,7 +135,7 @@
  
             - meta: end_host
  
-        # 6️⃣ Detect alert from work notes + summary + description
+        #  Detect alert from work notes + summary + description
         - name: Detect alert type
           set_fact:
             alert_type: >-
@@ -152,7 +152,7 @@
               generic
               {% endif %}
  
-        # 7️⃣ Cisco Troubleshooting Roles
+        #  Cisco Troubleshooting Roles
         - name: Cisco CPU Utilization Troubleshooting
           include_role:
             name: cisco_cpu_utilization
@@ -171,7 +171,7 @@
             tasks_from: stackportport_down.yml
           when: alert_type == 'stack'
  
-        # 8️⃣ Update ServiceNow work notes
+        #  Update ServiceNow work notes
         - name: Update incident with troubleshooting result
           uri:
             url: "https://hclitsmqa.service-now.com/u_core_automation_inc_vlan_cpu.do?WSDL"
