@@ -19,3 +19,55 @@ My Reference of this project
   1. TO addressing Stack Port DOWN issues identified for LAN devices. 
   2. This project is to validate the stack port is down, based on incident request
   3. 
+===========================================================================================
+5.1 Automation Solution 
+
+   5.1.1 Stack Port DOWN - Automation Solution 
+
+Technician will monitor Stack Port Down alerts in splunk tool manually. 
+
+Once alerts found, technician will raise the incident request and assign to automation queue manually. 
+
+Once request is raised incident request information will be available in staging table. 
+
+Automation will read the status in staging table. 
+
+If status is, Assigned automation will pick up the tasks and update the tasks status to work in progress in staging table. 
+
+Check the incident contains correlation or not using work notes. 
+
+If it is not a correlation automation will follow the below steps.   
+
+The Required Automation parameters will be picked up from the summary field of the staging table. 
+
+Connect to LAN device. 
+
+If the device is not reachable, automation will update the acknowledgment as TRANSFER in staging table, post that the incident request will be transferred to NOC queue. 
+
+If the host is reachable, Execute the following command: 
+
+show switch detail 
+
+ 
+
+If the command does not work, then the automation will update acknowledgement as TRANSFER in staging table. 
+
+If the commands are working check below steps 
+
+If multiple switches are stacked, the number of switches will be listed. 
+
+Validate the switch status and extract the Logs. 
+
+If all switches are in READY state update the logs and task status as closed in staging table fields. 
+
+Based on the task status as closed, SNOW team will update the logs in incident work notes and close the incident request. 
+
+If any switches are in DOWN state, update the logs and the task status as transferred in the staging table fields. 
+
+Based on task status as transferred in staging table SNOW team will transfer the incident to SCON team and will be update the logs in SNOW work notes 
+
+If correlation alerts found, then automation will perform the step 9 to 15 for first 5 correlated alerts found in the incident worknotes and update the logs and tasks status as TRANSFER in the staging table. 
+
+Send mail to SCON based on the acknowledgement send from SNOW team. 
+
+
