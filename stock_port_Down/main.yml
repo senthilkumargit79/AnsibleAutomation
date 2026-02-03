@@ -36,7 +36,7 @@
         fail_msg: >
           Missing required variables.
           Ensure secrets.yml defines:
-          - snow_instance (e.g. devxxxxx.service-now.com)
+          - snow_instance (service-nowurl)
           - assignment_group_sys_id (sys_id of the assignment group)
         success_msg: "Required ServiceNow variables are present."
 
