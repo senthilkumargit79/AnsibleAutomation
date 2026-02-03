@@ -1,0 +1,112 @@
+
+- name: Check LAN device SSH reachability
+  wait_for:
+    host: "{{ ci_host }}"
+    port: "{{ ssh_port }}"
+    timeout: "{{ ssh_timeout }}"
+  register: lan_connectivity
+  failed_when: false
+ 
+- name: Transfer if LAN device not reachable
+  uri:
+    url: "https://{{ snow_instance }}/api/now/table/{{ staging_table }}/{{ item.sys_id }}"
+    user: "{{ snow_user }}"
+    password: "{{ snow_pass }}"
+    method: PATCH
+    body_format: json
+    body:
+      acknowledgment: "TRANSFER"
+      task_status: "TRANSFERRED"
+      logs: "LAN device {{ ci_host }} is not reachable on SSH."
+      state: "TRANSFERRED"
+      assigned_to: "{{ noc_group }}"
+  when: lan_connectivity is failed
+ 
+- meta: end_role
+  when: lan_connectivity is failed
+ 
+# ---------------------------------------
+# 2. Execute show switch detail
+# ---------------------------------------
+- name: Execute show switch detail
+  ansible.netcommon.cli_command:
+    command: "{{ lan_command }}"
+  vars:
+    ansible_host: "{{ ci_host }}"
+    ansible_user: "{{ net_username }}"
+    ansible_password: "{{ net_password }}"
+    ansible_connection: network_cli
+    ansible_network_os: ios
+  register: switch_output
+  failed_when: false
+ 
+- name: Transfer if switch command failed
+  uri:
+    url: "https://{{ snow_instance }}/api/now/table/{{ staging_table }}/{{ item.sys_id }}"
+    user: "{{ snow_user }}"
+    password: "{{ snow_pass }}"
+    method: PATCH
+    body_format: json
+    body:
+      acknowledgment: "TRANSFER"
+      task_status: "TRANSFERRED"
+      logs: "Command '{{ lan_command }}' failed on LAN device."
+      state: "TRANSFERRED"
+      assigned_to: "{{ noc_group }}"
+  when: switch_output.failed or switch_output.stdout is not defined
+ 
+- meta: end_role
+  when: switch_output.failed or switch_output.stdout is not defined
+ 
+# ---------------------------------------
+# 3. Parse switch stack & status
+# ---------------------------------------
+- name: Extract switch states
+  set_fact:
+    switch_states: "{{ switch_output.stdout | regex_findall('Switch\\s+\\d+\\s+.*?(READY|DOWN)', multiline=True) }}"
+ 
+- name: Determine if any switch is DOWN
+  set_fact:
+    switch_down: "{{ 'DOWN' in switch_states }}"
+ 
+# ---------------------------------------
+# 4. Build log message
+# ---------------------------------------
+- name: Prepare switch logs
+  set_fact:
+    lan_log_msg: |
+      LAN Switch Health Check:
+      Device: {{ ci_host }}
+      Switch States: {{ switch_states | join(', ') }}
+ 
+# ---------------------------------------
+# 5. Update ServiceNow based on result
+# ---------------------------------------
+- name: Close task if all switches are READY
+  uri:
+    url: "https://{{ snow_instance }}/api/now/table/{{ staging_table }}/{{ item.sys_id }}"
+    user: "{{ snow_user }}"
+    password: "{{ snow_pass }}"
+    method: PATCH
+    body_format: json
+    body:
+      task_status: "CLOSED"
+      acknowledgment: "AUTO-CLOSED"
+      logs: "{{ lan_log_msg }}"
+      state: "RESOLVED"
+  when: not switch_down
+ 
+- name: Transfer task if any switch is DOWN
+  uri:
+    url: "https://{{ snow_instance }}/api/now/table/{{ staging_table }}/{{ item.sys_id }}"
+    user: "{{ snow_user }}"
+    password: "{{ snow_pass }}"
+    method: PATCH
+    body_format: json
+    body:
+      task_status: "TRANSFERRED"
+      acknowledgment: "TRANSFER"
+      logs: "{{ lan_log_msg }}"
+      state: "TRANSFERRED"
+      assigned_to: "{{ noc_group }}"
+  when: switch_down
