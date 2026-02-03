@@ -374,3 +374,96 @@
                   "{{ f_email_sent }}": true
                 status_code: 200
 
+==============================================================
+Another for only task for move to bandla git
+
+---
+- name: Stack Port DOWN - 
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    # Required (pass via --extra-vars)
+    device_ip: ""
+    device_user: ""
+    device_pass: ""
+
+    # Optional
+    device_os: "cisco.ios"
+    device_port: 22
+    show_command: "show switch detail"
+    reachability_timeout: 8
+
+  tasks:
+    - name:  Stack Port DOWN  Validate required inputs
+      ansible.builtin.assert:
+        that:
+          - device_ip | length > 0
+          - device_user | length > 0
+          - device_pass | length > 0
+        fail_msg: "Missing required inputs: device_ip, device_user, device_pass"
+
+    - name: Check device reachability on SSH
+      ansible.builtin.wait_for:
+        host: "{{ device_ip }}"
+        port: "{{ device_port | int }}"
+        timeout: "{{ reachability_timeout | int }}"
+      register: reach
+      failed_when: false
+
+    - name: Set unreachable flag
+      ansible.builtin.set_fact:
+        unreachable: "{{ reach is failed }}"
+
+    - name: Run show switch detail (Cisco IOS)
+      when: not unreachable
+      vars:
+        ansible_connection: ansible.netcommon.network_cli
+        ansible_network_os: "{{ device_os }}"
+        ansible_user: "{{ device_user }}"
+        ansible_password: "{{ device_pass }}"
+        ansible_port: "{{ device_port | int }}"
+      cisco.ios.ios_command:
+        commands:
+          - "{{ show_command }}"
+      register: show_out
+      failed_when: false
+
+    - name: Set command_failed flag
+      ansible.builtin.set_fact:
+        command_failed: "{{ (not unreachable) and (show_out is failed or (show_out.stdout is not defined)) }}"
+
+    - name: Parse READY/DOWN (generic parsing)
+      when: (not unreachable) and (not command_failed)
+      ansible.builtin.set_fact:
+        stdout_text: "{{ show_out.stdout[0] | default('') }}"
+        ready_count: "{{ (show_out.stdout[0] | default('') | regex_findall('(?im)\\bREADY\\b') | length) | int }}"
+        down_count: "{{ (show_out.stdout[0] | default('') | regex_findall('(?im)\\bDOWN\\b') | length) | int }}"
+        down_lines: "{{ (show_out.stdout[0] | default('') | regex_findall('(?im)^.*\\bDOWN\\b.*$')) | list }}"
+
+    - name: Decide final result (CLOSED vs TRANSFER)
+      ansible.builtin.set_fact:
+        final_status: >-
+          {{
+            (unreachable or command_failed or (down_count | default(0) | int > 0))
+            | ternary('TRANSFER', 'CLOSED')
+          }}
+
+    - name: Print final outcome summary
+      ansible.builtin.debug:
+        msg: |
+          Stack Port DOWN - Device Check Result
+          DeviceIP={{ device_ip }}
+          Reachable={{ (not unreachable) }}
+          CommandOK={{ (not command_failed) if (not unreachable) else 'N/A' }}
+          READY_Count={{ ready_count | default('N/A') }}
+          DOWN_Count={{ down_count | default('N/A') }}
+          DOWN_Lines={{ down_lines | default([]) }}
+          FinalStatus={{ final_status }}
+
+    # Optional: Print raw output if needed
+    - name: Debug raw command output (optional)
+      when: (not unreachable) and (not command_failed)
+      ansible.builtin.debug:
+        var: stdout_text
+      verbosity: 1
