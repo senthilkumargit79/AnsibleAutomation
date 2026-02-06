@@ -82,8 +82,8 @@
           DOWN_Lines={{ down_lines | default([]) }}
           FinalStatus={{ final_status }}
 
-    - name: Debug raw command output (optional)
-      when: (not unreachable) and (not command_failed)
-      ansible.builtin.debug:
-        var: stdout_text
-      verbosity: 1
+   # - name: Debug raw command output (optional)
+    #  when: (not unreachable) and (not command_failed)
+    #  ansible.builtin.debug:
+     #   var: stdout_text
+    #  verbosity: 1
