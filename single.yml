@@ -1,0 +1,469 @@
+---
+- name: Stack Port DOWN 
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - secrets.yml
+
+  vars:
+    # ServiceNow API
+    snow_api_base: "https://{{ snow_instance }}/api/now/table"
+    incident_table: "incident"
+    staging_table: "u_staging_stack_port_down"
+
+    # Staging fields
+    f_status: "u_status"
+    f_summary: "u_summary"
+    f_incident_sysid: "u_incident_sys_id"
+    f_logs: "u_logs"
+    f_ack: "u_acknowledgement"
+    f_email_sent: "u_email_sent"
+
+    # Status values
+    status_assigned: "Assigned"
+    status_wip: "Work in Progress"
+    status_closed: "Closed"
+    status_transferred: "Transferred"
+
+    # Correlation keywords
+    correlation_keywords:
+      - "correlation"
+      - "correlated"
+      - "correlation id"
+
+    # Safety limits
+    max_records_per_run: 20
+    max_correlated_alerts: 5
+
+    # Defaults
+    default_device_os: "cisco.ios"
+    default_port: 22
+
+  tasks:
+    - name: Stack Port Down 
+      block:
+
+        - name: Validate required ServiceNow variables
+          ansible.builtin.assert:
+            that:
+              - snow_instance is defined and (snow_instance | length > 0)
+              - snow_user is defined and (snow_user | length > 0)
+              - snow_pass is defined and (snow_pass | length > 0)
+            fail_msg: "Missing ServiceNow connection variables in secrets.yml (snow_instance, snow_user, snow_pass)."
+
+        - name: Set current timestamp (gather_facts is false)
+          ansible.builtin.set_fact:
+            now_iso: "{{ lookup('pipe', 'date -Is') }}
+
+        - name: Get staging records in Assigned status
+          ansible.builtin.uri:
+            url: "{{ snow_api_base }}/{{ staging_table }}?sysparm_query={{ f_status }}={{ status_assigned | urlencode }}&sysparm_limit={{ max_records_per_run }}"
+            method: GET
+            user: "{{ snow_user }}"
+            password: "{{ snow_pass }}"
+            force_basic_auth: true
+            headers:
+              Accept: "application/json"
+            return_content: true
+            status_code: 200
+          register: staging_get
+
+        - name: Set staging_records list
+          ansible.builtin.set_fact:
+            staging_records: "{{ staging_get.json.result | default([]) }}"
+
+        - name: No Assigned records - exit gracefully
+          ansible.builtin.debug:
+            msg: "No staging records in Assigned status."
+          when: (staging_records | length) == 0
+        - name: Process staging records
+          when: (staging_records | length) > 0
+          loop: "{{ staging_records }}"
+          loop_control:
+            loop_var: stg
+            label: "{{ stg.sys_id }}"
+          block:
+
+            - name: Update staging status -> Work in Progress
+              ansible.builtin.uri:
+                url: "{{ snow_api_base }}/{{ staging_table }}/{{ stg.sys_id }}"
+                method: PATCH
+                user: "{{ snow_user }}"
+                password: "{{ snow_pass }}"
+                force_basic_auth: true
+                headers:
+                  Content-Type: "application/json"
+                  Accept: "application/json"
+                body_format: json
+                body:
+                  "{{ f_status }}": "{{ status_wip }}"
+                  "{{ f_logs }}": "Picked by automation at {{ now_iso }}"
+                status_code: 200
+
+            - name: Read incident work notes (for correlation check)
+              ansible.builtin.uri:
+                url: "{{ snow_api_base }}/{{ incident_table }}/{{ stg[f_incident_sysid] }}?sysparm_fields=number,work_notes,short_description"
+                method: GET
+                user: "{{ snow_user }}"
+                password: "{{ snow_pass }}"
+                force_basic_auth: true
+                headers:
+                  Accept: "application/json"
+                return_content: true
+                status_code: 200
+              register: incident_get
+
+            - name: Set incident variables
+              ansible.builtin.set_fact:
+                incident_number: "{{ incident_get.json.result.number | default('UNKNOWN') }}"
+                incident_work_notes: "{{ incident_get.json.result.work_notes | default('') }}"
+                correlation_found: >-
+                  {{
+                    (correlation_keywords
+                     | select('in', (incident_get.json.result.work_notes | default('') | lower))
+                     | list
+                     | length) > 0
+                  }}
+
+            - name: Parse summary JSON with fallback to regex
+              block:
+                - name: Parse summary JSON
+                  ansible.builtin.set_fact:
+                    summary_obj: "{{ stg[f_summary] | from_json }}"
+              rescue:
+                - name: Fallback regex parse (if not JSON)
+                  ansible.builtin.set_fact:
+                    summary_obj:
+                      device_ip: "{{ (stg[f_summary] | regex_search('(?i)device_ip\\s*[:=]\\s*([0-9\\.]+)', '\\1')) | default('') }}"
+                      device_os: "{{ (stg[f_summary] | regex_search('(?i)device_os\\s*[:=]\\s*([A-Za-z0-9\\._]+)', '\\1')) | default(default_device_os) }}"
+                      port: "{{ ((stg[f_summary] | regex_search('(?i)port\\s*[:=]\\s*(\\d+)', '\\1')) | default(default_port)) | int }}"
+                      device_user: "{{ (stg[f_summary] | regex_search('(?i)user(name)?\\s*[:=]\\s*([^,\\s]+)', '\\2')) | default('') }}"
+                      device_pass: "{{ (stg[f_summary] | regex_search('(?i)pass(word)?\\s*[:=]\\s*([^,\\s]+)', '\\2')) | default('') }}"
+
+            - name: Validate required device parameters exist
+              ansible.builtin.assert:
+                that:
+                  - (summary_obj.device_ip | default('') | length) > 0
+                  - (summary_obj.device_user | default('') | length) > 0
+                  - (summary_obj.device_pass | default('') | length) > 0
+              fail_msg: "Missing device parameters in staging summary for staging sys_id={{ stg.sys_id }}. Use JSON format for u_summary."
+            - name: Extract correlated list (best effort)
+              when: correlation_found
+              ansible.builtin.set_fact:
+                correlated_list: >-
+                  {{
+                    (incident_work_notes | regex_findall('(?i)alert\\s*[:=]\\s*([^\\n\\r]+)'))
+                    | map('trim') | list | unique | list
+                  }}
+
+            - name: Set targets to process
+              ansible.builtin.set_fact:
+                targets: >-
+                  {{
+                    correlation_found | ternary(
+                      ((correlated_list | default([]))[:max_correlated_alerts] | default(['CORRELATED_ALERT'])),
+                      ['PRIMARY_ALERT']
+                    )
+                  }}
+
+            # 2.5 Init aggregation flags for this staging record
+            - name: Initialize logs/flags
+              ansible.builtin.set_fact:
+                agg_logs: []
+                any_down: false
+                cmd_failed: false
+                unreachable: false
+
+            - name: Process each target
+              loop: "{{ targets }}"
+              loop_control:
+                loop_var: target
+                label: "{{ target }}"
+              block:
+
+                - name: Check device reachability (port check)
+                  ansible.builtin.wait_for:
+                    host: "{{ summary_obj.device_ip }}"
+                    port: "{{ summary_obj.port | int }}"
+                    timeout: 8
+                  register: reach
+                  failed_when: false
+
+                - name: Update reachability flags
+                  ansible.builtin.set_fact:
+                    this_unreachable: "{{ reach is failed }}"
+                    unreachable: "{{ unreachable or (reach is failed) }}"
+
+                - name: Append unreachable log
+                  when: this_unreachable
+                  ansible.builtin.set_fact:
+                    agg_logs: "{{ agg_logs + [ 'Target=' ~ target ~ ' Device ' ~ summary_obj.device_ip ~ ' NOT reachable on port ' ~ (summary_obj.port | string) ] }}"
+
+                - name: Run show switch detail (Cisco IOS)
+                  when: not this_unreachable
+                  vars:
+                    ansible_connection: ansible.netcommon.network_cli
+                    ansible_network_os: "{{ summary_obj.device_os }}"
+                    ansible_user: "{{ summary_obj.device_user }}"
+                    ansible_password: "{{ summary_obj.device_pass }}"
+                    ansible_port: "{{ summary_obj.port | int }}"
+                  cisco.ios.ios_command:
+                    commands:
+                      - "show switch detail"
+                  register: show_out
+                  failed_when: false
+
+                - name: Update cmd failure flags
+                  when: not this_unreachable
+                  ansible.builtin.set_fact:
+                    this_cmd_failed: "{{ (show_out is failed) or (show_out.stdout is not defined) }}"
+                    cmd_failed: "{{ cmd_failed or ((show_out is failed) or (show_out.stdout is not defined)) }}"
+
+                - name: Append command failure log
+                  when: (not this_unreachable) and this_cmd_failed
+                  ansible.builtin.set_fact:
+                    agg_logs: "{{ agg_logs + [ 'Target=' ~ target ~ ' show switch detail FAILED' ] }}"
+
+                - name: Parse output for READY/DOWN
+                  when: (not this_unreachable) and (not this_cmd_failed)
+                  ansible.builtin.set_fact:
+                    ready_count: "{{ (show_out.stdout[0] | default('') | regex_findall('(?im)\\bREADY\\b') | length) | int }}"
+                    down_count: "{{ (show_out.stdout[0] | default('') | regex_findall('(?im)\\bDOWN\\b') | length) | int }}"
+                    any_down: "{{ any_down or ((show_out.stdout[0] | default('') | regex_findall('(?im)\\bDOWN\\b') | length) > 0) }}"
+
+                - name: Append parsed summary log
+                  when: (not this_unreachable) and (not this_cmd_failed)
+                  ansible.builtin.set_fact:
+                    agg_logs: "{{ agg_logs + [ 'Target=' ~ target ~ ' READY=' ~ (ready_count | string) ~ ' DOWN=' ~ (down_count | string) ] }}"
+
+              rescue:
+                - name: Catch unexpected errors per target
+                  ansible.builtin.set_fact:
+                    cmd_failed: true
+                    agg_logs: "{{ agg_logs + [ 'Target=' ~ target ~ ' Unexpected error during processing' ] }}"
+
+            
+            - name: Decide final status
+              ansible.builtin.set_fact:
+                final_status: >-
+                  {{
+                    (unreachable or cmd_failed) | ternary(
+                      status_transferred,
+                      (any_down | ternary(status_transferred, status_closed))
+                    )
+                  }}
+
+            - name: Force TRANSFER if correlation found
+              when: correlation_found
+              ansible.builtin.set_fact:
+                final_status: "{{ status_transferred }}"
+
+            - name: Build final log text
+              ansible.builtin.set_fact:
+                final_log_text: |
+                  Incident={{ incident_number }}
+                  CorrelationFound={{ correlation_found }}
+                  DeviceIP={{ summary_obj.device_ip }}
+                  Targets={{ targets | join(', ') }}
+                  Results:
+                  {{ agg_logs | join('\n') }}
+            - name: Update staging with final status/logs/ack
+              ansible.builtin.uri:
+                url: "{{ snow_api_base }}/{{ staging_table }}/{{ stg.sys_id }}"
+                method: PATCH
+                user: "{{ snow_user }}"
+                password: "{{ snow_pass }}"
+                force_basic_auth: true
+                headers:
+                  Content-Type: "application/json"
+                  Accept: "application/json"
+                body_format: json
+                body:
+                  "{{ f_status }}": "{{ final_status }}"
+                  "{{ f_logs }}": "{{ final_log_text }}"
+                  "{{ f_ack }}": "{{ (final_status == status_transferred) | ternary('TRANSFER', '') }}"
+                status_code: 200
+
+            - name: Transfer incident to NOC queue when TRANSFER
+              when: final_status == status_transferred
+              ansible.builtin.uri:
+                url: "{{ snow_api_base }}/{{ incident_table }}/{{ stg[f_incident_sysid] }}"
+                method: PATCH
+                user: "{{ snow_user }}"
+                password: "{{ snow_pass }}"
+                force_basic_auth: true
+                headers:
+                  Content-Type: "application/json"
+                  Accept: "application/json"
+                body_format: json
+                body:
+                  assignment_group: "{{ noc_group_sys_id }}"
+                  work_notes: "{{ final_log_text }}"
+                status_code: 200
+
+          rescue:
+            - name: If record processing fails, mark as TRANSFER
+              ansible.builtin.uri:
+                url: "{{ snow_api_base }}/{{ staging_table }}/{{ stg.sys_id }}"
+                method: PATCH
+                user: "{{ snow_user }}"
+                password: "{{ snow_pass }}"
+                force_basic_auth: true
+                headers:
+                  Content-Type: "application/json"
+                  Accept: "application/json"
+                body_format: json
+                body:
+                  "{{ f_status }}": "{{ status_transferred }}"
+                  "{{ f_ack }}": "TRANSFER"
+                  "{{ f_logs }}": "Automation failure for staging sys_id={{ stg.sys_id }} at {{ now_iso }}"
+                status_code: 200
+        - name: Get staging records requiring SCON email
+          ansible.builtin.uri:
+            url: "{{ snow_api_base }}/{{ staging_table }}?sysparm_query={{ f_ack }}=TRANSFER^{{ f_email_sent }}!=true"
+            method: GET
+            user: "{{ snow_user }}"
+            password: "{{ snow_pass }}"
+            force_basic_auth: true
+            headers:
+              Accept: "application/json"
+            return_content: true
+            status_code: 200
+          register: notify_get
+
+        - name: Email SCON for each pending record and mark sent
+          loop: "{{ notify_get.json.result | default([]) }}"
+          loop_control:
+            loop_var: mailrec
+            label: "{{ mailrec.sys_id }}"
+          block:
+            - name: Send email to SCON
+              ansible.builtin.mail:
+                host: "{{ smtp_host }}"
+                port: "{{ smtp_port | int }}"
+                from: "{{ mail_from }}"
+                to: "{{ mail_to_scon }}"
+                subject: "Stack Port DOWN - TRANSFER required (Staging {{ mailrec.sys_id }})"
+                body: |
+                  SCON Team,
+
+                  SNOW acknowledgement indicates TRANSFER is required.
+
+                  Staging sys_id: {{ mailrec.sys_id }}
+                  Status: {{ mailrec[f_status] | default('') }}
+
+                  Logs:
+                  {{ mailrec[f_logs] | default('No logs') }}
+
+                  Regards,
+                  Automation
+              delegate_to: localhost
+
+            - name: Mark email sent in staging table
+              ansible.builtin.uri:
+                url: "{{ snow_api_base }}/{{ staging_table }}/{{ mailrec.sys_id }}"
+                method: PATCH
+                user: "{{ snow_user }}"
+                password: "{{ snow_pass }}"
+                force_basic_auth: true
+                headers:
+                  Content-Type: "application/json"
+                  Accept: "application/json"
+                body_format: json
+                body:
+                  "{{ f_email_sent }}": true
+                status_code: 200
+
+==============================================================
+Another for only task for move to bandla git
+
+---
+- name: Stack Port DOWN - 
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    # Required (pass via --extra-vars)
+    device_ip: ""
+    device_user: ""
+    device_pass: ""
+
+    # Optional
+    device_os: "cisco.ios"
+    device_port: 22
+    show_command: "show switch detail"
+    reachability_timeout: 8
+
+  tasks:
+    - name:  Stack Port DOWN  Validate required inputs
+      ansible.builtin.assert:
+        that:
+          - device_ip | length > 0
+          - device_user | length > 0
+          - device_pass | length > 0
+        fail_msg: "Missing required inputs: device_ip, device_user, device_pass"
+
+    - name: Check device reachability on SSH
+      ansible.builtin.wait_for:
+        host: "{{ device_ip }}"
+        port: "{{ device_port | int }}"
+        timeout: "{{ reachability_timeout | int }}"
+      register: reach
+      failed_when: false
+
+    - name: Set unreachable flag
+      ansible.builtin.set_fact:
+        unreachable: "{{ reach is failed }}"
+
+    - name: Run show switch detail (Cisco IOS)
+      when: not unreachable
+      vars:
+        ansible_connection: ansible.netcommon.network_cli
+        ansible_network_os: "{{ device_os }}"
+        ansible_user: "{{ device_user }}"
+        ansible_password: "{{ device_pass }}"
+        ansible_port: "{{ device_port | int }}"
+      cisco.ios.ios_command:
+        commands:
+          - "{{ show_command }}"
+      register: show_out
+      failed_when: false
+
+    - name: Set command_failed flag
+      ansible.builtin.set_fact:
+        command_failed: "{{ (not unreachable) and (show_out is failed or (show_out.stdout is not defined)) }}"
+
+    - name: Parse READY/DOWN (generic parsing)
+      when: (not unreachable) and (not command_failed)
+      ansible.builtin.set_fact:
+        stdout_text: "{{ show_out.stdout[0] | default('') }}"
+        ready_count: "{{ (show_out.stdout[0] | default('') | regex_findall('(?im)\\bREADY\\b') | length) | int }}"
+        down_count: "{{ (show_out.stdout[0] | default('') | regex_findall('(?im)\\bDOWN\\b') | length) | int }}"
+        down_lines: "{{ (show_out.stdout[0] | default('') | regex_findall('(?im)^.*\\bDOWN\\b.*$')) | list }}"
+
+    - name: Decide final result (CLOSED vs TRANSFER)
+      ansible.builtin.set_fact:
+        final_status: >-
+          {{
+            (unreachable or command_failed or (down_count | default(0) | int > 0))
+            | ternary('TRANSFER', 'CLOSED')
+          }}
+
+    - name: Print final outcome summary
+      ansible.builtin.debug:
+        msg: |
+          Stack Port DOWN - Device Check Result
+          DeviceIP={{ device_ip }}
+          Reachable={{ (not unreachable) }}
+          CommandOK={{ (not command_failed) if (not unreachable) else 'N/A' }}
+          READY_Count={{ ready_count | default('N/A') }}
+          DOWN_Count={{ down_count | default('N/A') }}
+          DOWN_Lines={{ down_lines | default([]) }}
+          FinalStatus={{ final_status }}
+
+    # Optional: Print raw output if needed
+   # - name: Debug raw command output (optional)
+    #  when: (not unreachable) and (not command_failed)
+    #  ansible.builtin.debug:
+     #   var: stdout_text
+     # verbosity: 1
