@@ -55,7 +55,7 @@
           ansible.builtin.set_fact:
             now_iso: "{{ lookup('pipe', 'date -Is') }}
 
-        - name: Get staging records in Assigned status
+        - name: Fetch the  staging records in Assigned status
           ansible.builtin.uri:
             url: "{{ snow_api_base }}/{{ staging_table }}?sysparm_query={{ f_status }}={{ status_assigned | urlencode }}&sysparm_limit={{ max_records_per_run }}"
             method: GET
