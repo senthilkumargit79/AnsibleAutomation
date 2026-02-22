@@ -1,0 +1,8 @@
+---
+- name: Decide final status
+  ansible.builtin.set_fact:
+    final_status: >-
+      {{
+        (down_count | int > 0)
+        | ternary(status_transferred, status_closed)
+      }}
