@@ -1,0 +1,36 @@
+---
+- name: Loop staging records
+  loop: "{{ staging_records }}"
+  loop_control:
+    loop_var: stg
+  block:
+
+    - name: Parse summary JSON
+      ansible.builtin.set_fact:
+        summary_obj: "{{ stg[f_summary] | from_json }}"
+
+    - name: Check SSH reachability
+      ansible.builtin.wait_for:
+        host: "{{ summary_obj.device_ip }}"
+        port: "{{ summary_obj.port | default(22) }}"
+        timeout: 8
+      register: reach
+      failed_when: false
+
+    - name: Run Cisco show command
+      when: reach is not failed
+      vars:
+        ansible_connection: ansible.netcommon.network_cli
+        ansible_network_os: "{{ summary_obj.device_os | default('cisco.ios.ios') }}"
+        ansible_user: "{{ summary_obj.device_user }}"
+        ansible_password: "{{ summary_obj.device_pass }}"
+      cisco.ios.ios_command:
+        commands:
+          - show switch detail
+      register: show_out
+      failed_when: false
+
+    - name: Parse READY / DOWN
+      ansible.builtin.set_fact:
+        ready_count: "{{ show_out.stdout[0] | regex_findall('READY') | length | default(0) }}"
+        down_count: "{{ show_out.stdout[0] | regex_findall('DOWN') | length | default(0) }}"
