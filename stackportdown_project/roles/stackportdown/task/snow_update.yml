@@ -1,0 +1,18 @@
+---
+- name: Update staging record
+  ansible.builtin.uri:
+    url: "{{ snow_api_base }}/{{ staging_table }}/{{ stg.sys_id }}"
+    method: PATCH
+    user: "{{ snow_user }}"
+    password: "{{ snow_pass }}"
+    force_basic_auth: true
+    headers:
+      Content-Type: application/json
+    body_format: json
+    body:
+      "{{ f_status }}": "{{ final_status }}"
+      "{{ f_logs }}": "READY={{ ready_count }} DOWN={{ down_count }}"
+    status_code: 200
+  loop: "{{ staging_records }}"
+  loop_control:
+    loop_var: stg
