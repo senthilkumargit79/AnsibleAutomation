@@ -1,0 +1,17 @@
+---
+- name: Get Assigned staging records
+  ansible.builtin.uri:
+    url: "{{ snow_api_base }}/{{ staging_table }}?sysparm_query={{ f_status }}={{ status_assigned }}"
+    method: GET
+    user: "{{ snow_user }}"
+    password: "{{ snow_pass }}"
+    force_basic_auth: true
+    headers:
+      Accept: application/json
+    return_content: true
+    status_code: 200
+  register: staging_get
+
+- name: Set staging list
+  ansible.builtin.set_fact:
+    staging_records: "{{ staging_get.json.result | default([]) }}"
