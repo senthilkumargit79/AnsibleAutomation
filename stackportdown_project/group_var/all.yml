@@ -1,0 +1,16 @@
+snow_api_base: "https://{{ snow_instance }}.service-now.com/api/now/table"
+
+staging_table: u_staging_table
+incident_table: incident
+
+status_assigned: Assigned
+status_wip: Work in Progress
+status_closed: Closed
+status_transferred: Transfer
+
+max_records_per_run: 5
+
+f_status: u_status
+f_logs: u_logs
+f_summary: u_summary
+f_incident_sysid: u_incident
