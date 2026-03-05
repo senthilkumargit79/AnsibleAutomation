@@ -1,0 +1,130 @@
+---
+- name: LAN Device Automation Workflow
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    # ServiceNow / Staging API details
+    snow_instance: ""
+    snow_user: ""
+    snow_pass: ""
+
+    # Network device details (from staging summary)
+    device_ip: ""
+    device_user: ""
+    device_pass: ""
+    device_os: "cisco.ios"
+    device_port: 22
+
+  tasks:
+
+    # -------------------------------------------------
+    # 1. Get Assigned Task from Staging Table
+    # -------------------------------------------------
+    - name: Get Assigned tasks from staging table
+      uri:
+        url: "https://{{ snow_instance }}/api/now/table/u_staging_table?sysparm_query=status=Assigned"
+        method: GET
+        user: "{{ snow_user }}"
+        password: "{{ snow_pass }}"
+        force_basic_auth: yes
+        return_content: yes
+      register: staging_response
+
+    - name: Fail if no assigned tasks found
+      fail:
+        msg: "No Assigned tasks found."
+      when: staging_response.json.result | length == 0
+
+    - name: Set task facts
+      set_fact:
+        task: "{{ staging_response.json.result[0] }}"
+        task_sys_id: "{{ staging_response.json.result[0].sys_id }}"
+        work_notes: "{{ staging_response.json.result[0].work_notes }}"
+        summary: "{{ staging_response.json.result[0].summary }}"
+
+    # -------------------------------------------------
+    # 2. Update Status to Work In Progress
+    # -------------------------------------------------
+    - name: Update staging status to Work In Progress
+      uri:
+        url: "https://{{ snow_instance }}/api/now/table/u_staging_table/{{ task_sys_id }}"
+        method: PATCH
+        user: "{{ snow_user }}"
+        password: "{{ snow_pass }}"
+        body_format: json
+        body:
+          status: "Work In Progress"
+      register: wip_update
+
+    # -------------------------------------------------
+    # 3. Check Correlation in Work Notes
+    # -------------------------------------------------
+    - name: Check if incident is correlated
+      set_fact:
+        is_correlated: "{{ 'correlation' in work_notes | lower }}"
+
+    - name: End play if correlated
+      debug:
+        msg: "Incident is correlated. Automation skipped."
+      when: is_correlated
+
+    - name: Stop execution if correlated
+      meta: end_play
+      when: is_correlated
+
+    # -------------------------------------------------
+    # 4. Parse Required Parameters from Summary
+    # (Example assumes summary contains device_ip)
+    # -------------------------------------------------
+    - name: Set device parameters from summary
+      set_fact:
+        device_ip: "{{ summary }}"
+
+    # -------------------------------------------------
+    # 5. Check Device Reachability
+    # -------------------------------------------------
+    - name: Check device reachability
+      wait_for:
+        host: "{{ device_ip }}"
+        port: "{{ device_port }}"
+        timeout: 8
+      register: reachability
+      ignore_errors: yes
+
+    # -------------------------------------------------
+    # 6. If Not Reachable → TRANSFER
+    # -------------------------------------------------
+    - name: Update staging to TRANSFER
+      uri:
+        url: "https://{{ snow_instance }}/api/now/table/u_staging_table/{{ task_sys_id }}"
+        method: PATCH
+        user: "{{ snow_user }}"
+        password: "{{ snow_pass }}"
+        body_format: json
+        body:
+          status: "TRANSFER"
+          acknowledgment: "Device not reachable"
+      when: reachability is failed
+
+    - name: End play if device unreachable
+      meta: end_play
+      when: reachability is failed
+
+    # -------------------------------------------------
+    # 7. Execute show switch detail
+    # -------------------------------------------------
+    - name: Run show switch detail command
+      ansible.netcommon.cli_command:
+        command: "show switch detail"
+      vars:
+        ansible_host: "{{ device_ip }}"
+        ansible_user: "{{ device_user }}"
+        ansible_password: "{{ device_pass }}"
+        ansible_network_os: "{{ device_os }}"
+        ansible_connection: network_cli
+      register: switch_output
+
+    - name: Display command output
+      debug:
+        var: switch_output.stdout
