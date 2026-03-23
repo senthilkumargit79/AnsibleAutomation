@@ -1,0 +1,26 @@
+---
+- name: ServiceNow Incident Automation from Staging Table
+  hosts: localhost
+  gather_facts: no
+  vars_files:
+    - vars.yml
+  tasks:
+    - name: Fetch incidents from staging table
+      uri:
+        url: https://{{ snow_instance }}/api/now/table/{{ staging_table
+          }}?sysparm_query=state=assigned
+        method: GET
+        user: "{{ snow_user }}"
+        password: "{{ snow_password }}"
+        force_basic_auth: yes
+        return_content: yes
+        validate_certs: no
+      register: incident_response
+    - name: End play if no incidents found
+      meta: end_play
+      when: incident_response.json.result | length == 0
+    - name: Process incidents sequentially
+      include_tasks: tasks/process.yml
+      loop: "{{ incident_response.json.result }}"
+      loop_control:
+        loop_var: incident
