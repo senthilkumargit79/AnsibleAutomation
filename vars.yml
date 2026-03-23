@@ -1,0 +1,15 @@
+ # ServiceNow
+    snow_instance: "your_instance.service-now.com"
+    snow_user: "snow_user"
+    snow_password: "snow_password"
+    staging_table: "incident"
+    automation_user: "automation_user"
+
+    # Email
+    server: "smtp.example.com"
+    port: 22
+    network_email: "network@example.com"
+
+    # Device SSH credentials
+    device_user: "device_user"
+    device_password: "device_password"
