@@ -15,26 +15,25 @@ tasks:
       INC_worknotes: "{{ result.json.result[0].worknotes | default('') }}"
       INC_type: "{{ result.json.result[0].type | default('') }}"
       INC_affected_ci: "{{ result.json.result[0].affected_ci | default('') }}"
-      # Optional summary container if your record has one
       INC_summary_raw: "{{ result.json.result[0].summary | default(result.json.result[0].u_summary | default('')) }}"
 
-    #---------- Update Work in Progress ---------------
-- name: Update incident to WIP
-  ansible.builtin.uri:
-    url: "https://{{ snow_instance }}/api/now/table/{{ staging_table }}/{{ sys_id }}"
-    method: PATCH
-    url_username: "{{ snow_user }}"
-    url_password: "{{ snow_password }}"
-    body_format: json
-    body:
-      state: 3
-      assigned_to: "{{ automation_user }}"
-    validate_certs: false
-    # ---------- Correlation detection ----------
-    - name: Detect correlation from work notes
-      ansible.builtin.set_fact:
-        is_correlation: "{{ (INC_worknotes | default('')) is search(correlation_regex) | default(false) }}"
+  #---------- Update Work in Progress ---------------
+  - name: Update incident to WIP
+    ansible.builtin.uri:
+      url: "https://{{ snow_instance }}/api/now/table/{{ staging_table }}/{{ INC_sysid }}"
+      method: PATCH
+      url_username: "{{ snow_user }}"
+      url_password: "{{ snow_password }}"
+      body_format: json
+      body:
+        state: 3
+        assigned_to: "{{ automation_user }}"
+      validate_certs: false
 
+  # ---------- Correlation detection ----------
+  - name: Detect correlation from work notes
+    ansible.builtin.set_fact:
+      is_correlation: "{{ (INC_worknotes | default('')) is search(correlation_regex) | default(false) }}"
     - name: Skip automation due to correlation (configurable)
       when: skip_if_correlation_found and is_correlation
       block:
