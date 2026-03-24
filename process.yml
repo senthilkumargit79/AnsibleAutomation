@@ -1,6 +1,6 @@
 
 tasks:
-    - name: Set Incident Facts
+  - name: Set Incident Facts
     ansible.builtin.set_fact:
       INC_short_description: "{{ result.json.result[0].short_description | default('') }}"
       INC_description: "{{ result.json.result[0].description | default('') }}"
