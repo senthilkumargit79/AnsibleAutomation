@@ -31,10 +31,9 @@ tasks:
       validate_certs: false
 
   # ---------- Correlation detection ----------
-  -- name: Detect correlation from work notes
-  ansible.builtin.set_fact:
+ - name: Detect correlation from work notes
+   ansible.builtin.set_fact:
     is_correlation: "{{ (INC_worknotes | default('')) is search(correlation_regex) | default(false) }}"
-
 - name: Skip automation due to correlation (configurable)
   when: skip_if_correlation_found and is_correlation
   block:
