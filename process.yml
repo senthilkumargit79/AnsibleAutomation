@@ -19,18 +19,17 @@ tasks:
       INC_summary_raw: "{{ result.json.result[0].summary | default(result.json.result[0].u_summary | default('')) }}"
 
     #---------- Update Work in Progress ---------------
-    - name: Update incident to WIP
-      ansible.builtin.uri:
-        url: "https://{{ snow_instance }}/api/now/table/{{ staging_table }}/{{ sys_id }}"
-        method: PATCH
-        url_username: "{{ snow_user }}"
-        url_password: "{{ snow_password }}"
-        body_format: json
-        body:
-          state: 3
-          assigned_to: "{{ automation_user }}"
-        validate_certs: false
-
+- name: Update incident to WIP
+  ansible.builtin.uri:
+    url: "https://{{ snow_instance }}/api/now/table/{{ staging_table }}/{{ sys_id }}"
+    method: PATCH
+    url_username: "{{ snow_user }}"
+    url_password: "{{ snow_password }}"
+    body_format: json
+    body:
+      state: 3
+      assigned_to: "{{ automation_user }}"
+    validate_certs: false
     # ---------- Correlation detection ----------
     - name: Detect correlation from work notes
       ansible.builtin.set_fact:
