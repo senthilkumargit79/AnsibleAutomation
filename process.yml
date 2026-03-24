@@ -1,51 +1,57 @@
 
-tasks:
-  - name: Set Incident Facts
-    ansible.builtin.set_fact:
-      INC_short_description: "{{ result.json.result[0].short_description | default('') }}"
-      INC_description: "{{ result.json.result[0].description | default('') }}"
-      INC_sysid: "{{ result.json.result[0].sys_id | default('') }}"
-      INC_fqdn: "{{ result.json.result[0].fqdn | default('') }}"
-      INC_requester: "{{ result.json.result[0].requester | default('') }}"
-      INC_ip_address: "{{ result.json.result[0].ip_address | default('') }}"
-      INC_incident_number: "{{ result.json.result[0].incident_number | default('') }}"
-      INC_requester_mail_id: "{{ result.json.result[0].requester_mail_id | default('') }}"
-      INC_sco_acknowledgement: "{{ result.json.result[0].sco_acknowledgement | default('') }}"
-      INC_status: "{{ result.json.result[0].status | default('') }}"
-      INC_worknotes: "{{ result.json.result[0].worknotes | default('') }}"
-      INC_type: "{{ result.json.result[0].type | default('') }}"
-      INC_affected_ci: "{{ result.json.result[0].affected_ci | default('') }}"
-      INC_summary_raw: "{{ result.json.result[0].summary | default(result.json.result[0].u_summary | default('')) }}"
+- name: ServiceNow Incident Automation from Staging Table
+  hosts: localhost
+  gather_facts: false
 
-  #---------- Update Work in Progress ---------------
-  - name: Update incident to WIP
-    ansible.builtin.uri:
-      url: "https://{{ snow_instance }}/api/now/table/{{ staging_table }}/{{ INC_sysid }}"
-      method: PATCH
-      url_username: "{{ snow_user }}"
-      url_password: "{{ snow_password }}"
-      body_format: json
-      body:
-        state: 3
-        assigned_to: "{{ automation_user }}"
-      validate_certs: false
+  tasks:
+    # ---------- Set Incident Facts ----------
+    - name: Set Incident Facts
+      ansible.builtin.set_fact:
+        INC_short_description: "{{ result.json.result[0].short_description | default('') }}"
+        INC_description: "{{ result.json.result[0].description | default('') }}"
+        INC_sysid: "{{ result.json.result[0].sys_id | default('') }}"
+        INC_fqdn: "{{ result.json.result[0].fqdn | default('') }}"
+        INC_requester: "{{ result.json.result[0].requester | default('') }}"
+        INC_ip_address: "{{ result.json.result[0].ip_address | default('') }}"
+        INC_incident_number: "{{ result.json.result[0].incident_number | default('') }}"
+        INC_requester_mail_id: "{{ result.json.result[0].requester_mail_id | default('') }}"
+        INC_sco_acknowledgement: "{{ result.json.result[0].sco_acknowledgement | default('') }}"
+        INC_status: "{{ result.json.result[0].status | default('') }}"
+        INC_worknotes: "{{ result.json.result[0].worknotes | default('') }}"
+        INC_type: "{{ result.json.result[0].type | default('') }}"
+        INC_affected_ci: "{{ result.json.result[0].affected_ci | default('') }}"
+        INC_summary_raw: "{{ result.json.result[0].summary | default(result.json.result[0].u_summary | default('')) }}"
 
-  # ---------- Correlation detection ----------
- - name: Detect correlation from work notes
-   ansible.builtin.set_fact:
-    is_correlation: "{{ (INC_worknotes | default('')) is search(correlation_regex) | default(false) }}"
-- name: Skip automation due to correlation (configurable)
-  when: skip_if_correlation_found and is_correlation
-  block:
-    - name: Note — skipping automation because correlation is present
+    # ---------- Update Work in Progress ----------
+    - name: Update incident to WIP
+      ansible.builtin.uri:
+        url: "https://{{ snow_instance }}/api/now/table/{{ staging_table }}/{{ INC_sysid }}"
+        method: PATCH
+        url_username: "{{ snow_user }}"
+        url_password: "{{ snow_password }}"
+        body_format: json
+        body:
+          state: 3
+          assigned_to: "{{ automation_user }}"
+        validate_certs: false
+
+    # ---------- Correlation detection ----------
+    - name: Detect correlation from work notes
+      ansible.builtin.set_fact:
+        is_correlation: "{{ (INC_worknotes | default('')) is search(correlation_regex) | default(false) }}"
+
+    # ---------- Skip if correlation ----------
+    - name: Skip automation due to correlation
+      when: skip_if_correlation_found and is_correlation
       ansible.builtin.debug:
-        msg: "Incident {{ INC_incident_number }} ({{ INC_sysid }}) skipped — correlation detected."
-    - name: Proceed when NOT correlation (or skipping disabled)
+        msg: "Incident {{ INC_incident_number }} skipped due to correlation"
+
+    # ---------- Proceed if NOT correlation ----------
+    - name: Proceed when NOT correlation
       when: (not is_correlation) or (not skip_if_correlation_found)
       block:
 
-        # ---------- Parse summary (YAML first, then key=value fallback) ----------
-        - name: Try to parse summary as YAML
+        - name: Parse summary as YAML
           vars:
             _default_summary: {}
           ansible.builtin.set_fact:
@@ -56,145 +62,58 @@ tasks:
               }}
           ignore_errors: true
 
-        - name: Fallback parse summary as key=value lines (if YAML parse failed)
+        - name: Fallback parse summary
           when: SUMMARY is not mapping
-          vars:
-            pairs: >-
-              {{
-                INC_summary_raw.splitlines()
-                | map('trim')
-                | select('match', '^[A-Za-z0-9_]+=')
-                | list
-              }}
-            as_dict: >-
-              {{
-                dict(pairs
-                  | map('regex_search', '([^=]+)=(.*)')
-                  | map('last'))
-              }}
           ansible.builtin.set_fact:
-            SUMMARY: "{{ as_dict | default({}) }}"
+            SUMMARY: {}
 
-        - name: Determine device connection parameters (summary overrides record fields)
+        - name: Set device connection parameters
           ansible.builtin.set_fact:
-            device_host: >-
-              {{
-                SUMMARY.host
-                  | default(SUMMARY.hostname
-                    | default(INC_fqdn
-                      | default(INC_ip_address)))
-              }}
+            device_host: "{{ SUMMARY.host | default(INC_ip_address) }}"
             device_user: "{{ SUMMARY.username | default(default_username) }}"
             device_pass: "{{ SUMMARY.password | default(default_password) }}"
             device_port: "{{ (SUMMARY.port | default(reachability_port)) | int }}"
             device_network_os: "{{ SUMMARY.network_os | default(default_network_os) }}"
-            device_ssh_args: "{{ SUMMARY.ssh_common_args | default('') }}"
 
-        # ---------- Reachability check ----------
-        - name: Check reachability (TCP port)
+        - name: Check reachability
           ansible.builtin.wait_for:
             host: "{{ device_host }}"
             port: "{{ device_port }}"
             timeout: "{{ reachability_timeout }}"
-            state: started
           register: reach
           failed_when: false
 
-        # ---------- If unreachable → TRANSFER to NOC ----------
-        - name: Handle unreachable host → TRANSFER to NOC
-          when: reach.elapsed is defined and (reach.elapsed | int) >= (reachability_timeout | int)
-          block:
-            - name: Update record → ack TRANSFER and assign to NOC
-              ansible.builtin.uri:
-                url: "{{ staging_base_url }}/api/now/table/{{ staging_table }}/{{ INC_sysid }}"
-                method: PATCH
-                headers: "{{ staging_common_headers }}"
-                url_username: "{{ staging_username if use_basic_auth else omit }}"
-                url_password: "{{ staging_password if use_basic_auth else omit }}"
-                force_basic_auth: "{{ use_basic_auth }}"
-                validate_certs: true
-                body_format: json
-                body:
-                  "{{ field_ack }}": "{{ ack_transfer_value }}"
-                  "{{ field_assignment_group }}": "{{ noc_group_name }}"
-                  "{{ field_worknotes }}": >-
-                    {{ (INC_worknotes | default('')) ~
-                       "\n[Automation] Device unreachable on port " ~ device_port ~
-                       ". Routing to " ~ noc_group_name ~ " queue (ack=TRANSFER)." }}
-              register: transfer_update
+        - name: Handle unreachable → NOC
+          when: reach.failed
+          ansible.builtin.debug:
+            msg: "Device {{ device_host }} unreachable"
 
-            - name: Log → Routed to NOC
-              ansible.builtin.debug:
-                msg: "Incident {{ INC_incident_number }} ({{ INC_sysid }}) routed to {{ noc_group_name }} — device unreachable."
+        - name: Add reachable device
+          when: not reach.failed
+          ansible.builtin.add_host:
+            name: "{{ device_host }}"
+            groups: dynamic_devices
+            ansible_connection: ansible.netcommon.network_cli
+            ansible_network_os: "{{ device_network_os }}"
+            ansible_user: "{{ device_user }}"
+            ansible_password: "{{ device_pass }}"
+            ansible_port: "{{ device_port }}"
+            staging_sysid: "{{ INC_sysid }}"
+            staging_incident_number: "{{ INC_incident_number }}"
 
-        # ---------- If reachable → enqueue device for command ----------
-        - name: Enqueue reachable device for command execution
-          when: reach.elapsed is defined and (reach.elapsed | int) < (reachability_timeout | int)
-          block:
-            - name: Dynamically add device host
-              ansible.builtin.add_host:
-                name: "{{ device_host }}"
-                groups: "dynamic_devices"
-                # Connection vars for the next play
-                ansible_connection: ansible.netcommon.network_cli
-                ansible_network_os: "{{ device_network_os }}"
-                ansible_port: "{{ device_port }}"
-                ansible_user: "{{ device_user }}"
-                ansible_password: "{{ device_pass }}"
-                ansible_ssh_common_args: "{{ device_ssh_args }}"
-                ansible_timeout: 30
-                # Record fields needed on device play
-                staging_sysid: "{{ INC_sysid }}"
-                staging_incident_number: "{{ INC_incident_number }}"
-                staging_worknotes: "{{ INC_worknotes | default('') }}"
-                staging_base_url: "{{ staging_base_url }}"
-                staging_table: "{{ staging_table }}"
-                staging_common_headers: "{{ staging_common_headers }}"
-                use_basic_auth: "{{ use_basic_auth }}"
-                staging_username: "{{ staging_username }}"
-                staging_password: "{{ staging_password }}"
-                field_worknotes: "{{ field_worknotes }}"
-
-            - name: Log → Enqueued for device command
-              ansible.builtin.debug:
-                msg: "Incident {{ INC_incident_number }} ({{ INC_sysid }}) — device {{ device_host }} reachable, will run 'show switch detail'."
-
-# ---------- play: run device command on reachable hosts and update notes ----------
-- name: Run 'show switch detail' on reachable devices and update notes
+# ---------- SECOND PLAY ----------
+- name: Run command on devices
   hosts: dynamic_devices
   gather_facts: false
-  serial: 5
+  collections:
+    - ansible.netcommon
 
   tasks:
-    - name: Run "show switch detail"
+    - name: Run show switch detail
       ansible.netcommon.cli_command:
         command: "show switch detail"
       register: cmd_out
 
-    - name: Summarize command output (truncate for work notes)
-      ansible.builtin.set_fact:
-        cmd_excerpt: >-
-          {{
-            (cmd_out.stdout | default('') | regex_replace('\r', ''))[:3500]
-          }}
-
-    - name: Post output to record work notes
-      delegate_to: localhost
-      ansible.builtin.uri:
-        url: "{{ hostvars[inventory_hostname].staging_base_url }}/api/now/table/{{ hostvars[inventory_hostname].staging_table }}/{{ hostvars[inventory_hostname].staging_sysid }}"
-        method: PATCH
-        headers: "{{ hostvars[inventory_hostname].staging_common_headers }}"
-        url_username: "{{ hostvars[inventory_hostname].staging_username if hostvars[inventory_hostname].use_basic_auth else omit }}"
-        url_password: "{{ hostvars[inventory_hostname].staging_password if hostvars[inventory_hostname].use_basic_auth else omit }}"
-        force_basic_auth: "{{ hostvars[inventory_hostname].use_basic_auth }}"
-        validate_certs: true
-        body_format: json
-        body:
-          "{{ hostvars[inventory_hostname].field_worknotes }}": >-
-            {{ (hostvars[inventory_hostname].staging_worknotes | default('')) ~
-               "\n[Automation] Command: show switch detail\n---\n" ~ (cmd_excerpt | string) ~ "\n---\n" }}
-      register: posted
-
-    - name: Print brief result
+    - name: Print output
       ansible.builtin.debug:
-        msg: "Device {{ inventory_hostname }} — 'show switch detail' executed and notes updated for {{ hostvars[inventory_hostname].staging_sysid }}."
+        var: cmd_out.stdout
